@@ -1,102 +1,63 @@
-#pragma once
+//project->yolo-dnn-cpp
+#ifndef INFERENCE_H
+#define INFERENCE_H
 
-#define    RET_OK nullptr
-#define    USE_CUDA
-
-#ifdef _WIN32
-#include <Windows.h>
-#include <direct.h>
-#include <io.h>
-#endif
-
-#include <string>
+// Cpp native
+#include <fstream>
 #include <vector>
-#include <cstdio>
+#include <string>
+#include <random>
+
+// OpenCV / DNN / Inference
+#include <opencv2/imgproc.hpp>
 #include <opencv2/opencv.hpp>
-#include "onnxruntime_cxx_api.h"
+#include <opencv2/dnn.hpp>
 
-#ifdef USE_CUDA
-#include <cuda_fp16.h>
-#endif
-
-
-enum MODEL_TYPE {
-    //FLOAT32 MODEL
-    YOLO_ORIGIN_V5 = 0,//support v5 detector currently
-    YOLO_ORIGIN_V8 = 1,//support v8 detector currently
-    YOLO_POSE_V8 = 2,
-    YOLO_CLS_V8 = 3,
-    YOLO_ORIGIN_V8_HALF = 4,
-    YOLO_POSE_V8_HALF = 5,
-    YOLO_CLS_V8_HALF = 6
+struct Detection
+{
+    int class_id{ 0 };
+    std::string className{};
+    float confidence{ 0.0 };
+    cv::Scalar color{};
+    cv::Rect box{};
+    cv::Mat boxMask;       //矩形框内mask，节省内存空间和加快速度
 };
 
-
-typedef struct _DCSP_INIT_PARAM {
-    std::string ModelPath;
-    MODEL_TYPE ModelType = YOLO_ORIGIN_V8;
-    std::vector<int> imgSize = { 640, 640 };
-    float modelConfidenceThreshold=0.25;
-    float RectConfidenceThreshold = 0.6;
-    float iouThreshold = 0.5;
-    bool CudaEnable = false;
-    int LogSeverityLevel = 3;
-    int IntraOpNumThreads = 1;
-} DCSP_INIT_PARAM;
-
-
-typedef struct _DCSP_RESULT {
-    int classId;
-    std::string className;
-    float confidence;
-    cv::Rect box;
-    cv::Mat boxMask;       //矩形框内mask，节省内存空间和加快速度
-    cv::Scalar color;
-} DCSP_RESULT;
-
-
-class DCSP_CORE {
+class Inference
+{
 public:
-    DCSP_CORE();
-
-    ~DCSP_CORE();
-
-public:
-    char* CreateSession(DCSP_INIT_PARAM& iParams);
-
-    char* RunSession(cv::Mat& iImg, std::vector<DCSP_RESULT>& oResult);
-
-    char* WarmUpSession();
-
-    template<typename N>
-    char* TensorProcess(clock_t& starttime_1, cv::Vec4d& params, cv::Mat& iImg, N& blob, std::vector<int64_t>& inputNodeDims,
-        std::vector<DCSP_RESULT>& oResult);
-
-    std::vector<std::string> classes{};
+    Inference(const std::string& onnxModelPath, const cv::Size& modelInputShape = { 640, 640 }, const std::string& classesTxtFile = "", const bool& runWithCuda = true);
+    std::vector<Detection> runInference(const cv::Mat& input);
+    void DrawPred(cv::Mat& img, std::vector<Detection>& result);
 
 private:
-    Ort::Env env;
-    Ort::Session* session;
-    bool cudaEnable;
-    Ort::RunOptions options;
-    std::vector<const char*> inputNodeNames;
-    std::vector<const char*> outputNodeNames;
+    void loadClassesFromFile();
+    void loadOnnxNetwork();
+    void LetterBox(const cv::Mat& image, cv::Mat& outImage,
+        cv::Vec4d& params, //[ratio_x,ratio_y,dw,dh]
+        const cv::Size& newShape = cv::Size(640, 640),
+        bool autoShape = false,
+        bool scaleFill = false,
+        bool scaleUp = true,
+        int stride = 32,
+        const cv::Scalar& color = cv::Scalar(114, 114, 114));
+    void GetMask(const cv::Mat& maskProposals, const cv::Mat& mask_protos, const cv::Vec4d& params, const cv::Size& srcImgShape, std::vector<Detection>& output);
 
-    MODEL_TYPE modelType;
-    std::vector<int> imgSize;
-    float modelConfidenceThreshold;
-    float rectConfidenceThreshold;
-    float iouThreshold;
+    std::string modelPath{};
+    std::string classesPath{};
+    bool cudaEnabled{};
+
+    std::vector<std::string> classes{ "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush" };
+
+    cv::Size2f modelShape{};
+
+    float modelConfidenceThreshold{ 0.25 };
+    float modelScoreThreshold{ 0.45 };
+    float modelNMSThreshold{ 0.50 };
+
+    bool letterBoxForSquare = true;
+
+    cv::dnn::Net net;
 };
 
-
-void LetterBox(const cv::Mat& image, cv::Mat& outImage,
-    cv::Vec4d& params, //[ratio_x,ratio_y,dw,dh]
-    const cv::Size& newShape = cv::Size(640, 640),
-    bool autoShape = false,
-    bool scaleFill = false,
-    bool scaleUp = true,
-    int stride = 32,
-    const cv::Scalar& color = cv::Scalar(114, 114, 114));
-
-void DrawPred(cv::Mat& img, std::vector<DCSP_RESULT>& result);
+#endif // INFERENCE_H
